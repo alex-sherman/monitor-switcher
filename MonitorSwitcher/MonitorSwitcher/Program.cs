@@ -10,81 +10,37 @@ using System.Text;
 using System.Windows.Forms;
 using System.Xml;
 using System.IO;
+using Newtonsoft.Json;
 
 namespace MonitorSwitcherGUI
 {
+    class SaveFormat
+    {
+        public CCDWrapper.DisplayConfigPathInfo[] PathInfoList;
+        public CCDWrapper.DisplayConfigModeInfo[] ModeInfoList;
+    }
     public class MonitorSwitcher
     {
 
-        public static Boolean LoadDisplaySettings(String fileName)
+        static bool id_cmp(uint a, uint b) => (a & 0xffff) == (b & 0xffff);
+        public static bool LoadDisplaySettings(string fileName)
         {
             if (!File.Exists(fileName))
             {
                 Console.WriteLine("Failed to load display settings because file does not exist: " + fileName);
-
                 return false;
             }
-
-            // Objects for DeSerialization of pathInfo and modeInfo classes
-            System.Xml.Serialization.XmlSerializer readerPath = new System.Xml.Serialization.XmlSerializer(typeof(CCDWrapper.DisplayConfigPathInfo));
-            System.Xml.Serialization.XmlSerializer readerModeTarget = new System.Xml.Serialization.XmlSerializer(typeof(CCDWrapper.DisplayConfigTargetMode));
-            System.Xml.Serialization.XmlSerializer readerModeSource = new System.Xml.Serialization.XmlSerializer(typeof(CCDWrapper.DisplayConfigSourceMode));
-            System.Xml.Serialization.XmlSerializer readerModeInfoType = new System.Xml.Serialization.XmlSerializer(typeof(CCDWrapper.DisplayConfigModeInfoType));
-            System.Xml.Serialization.XmlSerializer readerModeAdapterID = new System.Xml.Serialization.XmlSerializer(typeof(CCDWrapper.LUID));
-
-            // Lists for storing the results
-            List<CCDWrapper.DisplayConfigPathInfo> pathInfoList = new List<CCDWrapper.DisplayConfigPathInfo>();
-            List<CCDWrapper.DisplayConfigModeInfo> modeInfoList = new List<CCDWrapper.DisplayConfigModeInfo>();
-
-            // Loading the xml file
-            XmlReader xml = XmlReader.Create(fileName);
-            xml.Read();
-            while (true)
+            SaveFormat save;
+            using (StreamReader sr = new StreamReader(fileName))
             {
-                if ((xml.Name.CompareTo("DisplayConfigPathInfo") == 0) && (xml.IsStartElement()))
-                {
-                    CCDWrapper.DisplayConfigPathInfo pathInfo = (CCDWrapper.DisplayConfigPathInfo)readerPath.Deserialize(xml);
-                    pathInfoList.Add(pathInfo);
-                    continue;
-                }
-                else if ((xml.Name.CompareTo("modeInfo") == 0) && (xml.IsStartElement()))
-                {
-                    CCDWrapper.DisplayConfigModeInfo modeInfo = new CCDWrapper.DisplayConfigModeInfo();
-                    xml.Read();
-                    xml.Read();
-                    modeInfo.id = Convert.ToUInt32(xml.Value);
-                    xml.Read();
-                    xml.Read();
-                    modeInfo.adapterId = (CCDWrapper.LUID)readerModeAdapterID.Deserialize(xml);
-                    modeInfo.infoType = (CCDWrapper.DisplayConfigModeInfoType)readerModeInfoType.Deserialize(xml);
-                    if (modeInfo.infoType == CCDWrapper.DisplayConfigModeInfoType.Target)
-                    {
-                        modeInfo.targetMode = (CCDWrapper.DisplayConfigTargetMode)readerModeTarget.Deserialize(xml);
-                    }
-                    else
-                    {
-                        modeInfo.sourceMode = (CCDWrapper.DisplayConfigSourceMode)readerModeSource.Deserialize(xml);
-                    }
-
-                    modeInfoList.Add(modeInfo);
-                    continue;
-                }
-
-                if (!xml.Read())
-                {
-                    break;
-                }
+                save = JsonConvert.DeserializeObject<SaveFormat>(sr.ReadToEnd());
             }
-            xml.Close();
+            var pathInfoArray = save.PathInfoList;
+            var modeInfoArray = save.ModeInfoList;
 
-            var pathInfoArray = pathInfoList.ToArray();
-            var modeInfoArray = modeInfoList.ToArray();
-
-            // Get current display settings
-            CCDWrapper.DisplayConfigPathInfo[] pathInfoArrayCurrent = new CCDWrapper.DisplayConfigPathInfo[0];
-            CCDWrapper.DisplayConfigModeInfo[] modeInfoArrayCurrent = new CCDWrapper.DisplayConfigModeInfo[0];
-
-            Boolean statusCurrent = GetDisplaySettings(ref pathInfoArrayCurrent, ref modeInfoArrayCurrent, false);
+            CCDWrapper.DisplayConfigPathInfo[] pathInfoArrayCurrent = null;
+            CCDWrapper.DisplayConfigModeInfo[] modeInfoArrayCurrent = null;
+            bool statusCurrent = GetDisplaySettings(ref pathInfoArrayCurrent, ref modeInfoArrayCurrent, false);
             if (statusCurrent)
             {
                 // For some reason the adapterID parameter changes upon system restart, all other parameters however, especially the ID remain constant.
@@ -94,8 +50,9 @@ namespace MonitorSwitcherGUI
                     for (int iPathInfoCurrent = 0; iPathInfoCurrent < pathInfoArrayCurrent.Length; iPathInfoCurrent++)
                     {
                         if ((pathInfoArray[iPathInfo].sourceInfo.id == pathInfoArrayCurrent[iPathInfoCurrent].sourceInfo.id) &&
-                            (pathInfoArray[iPathInfo].targetInfo.id == pathInfoArrayCurrent[iPathInfoCurrent].targetInfo.id))
+                            id_cmp(pathInfoArray[iPathInfo].targetInfo.id, pathInfoArrayCurrent[iPathInfoCurrent].targetInfo.id))
                         {
+                            pathInfoArray[iPathInfo].targetInfo.id = pathInfoArrayCurrent[iPathInfoCurrent].targetInfo.id;
                             pathInfoArray[iPathInfo].sourceInfo.adapterId.LowPart = pathInfoArrayCurrent[iPathInfoCurrent].sourceInfo.adapterId.LowPart;
                             pathInfoArray[iPathInfo].targetInfo.adapterId.LowPart = pathInfoArrayCurrent[iPathInfoCurrent].targetInfo.adapterId.LowPart;
                             break;
@@ -108,9 +65,10 @@ namespace MonitorSwitcherGUI
                 {
                     for (int iPathInfo = 0; iPathInfo < pathInfoArray.Length; iPathInfo++)
                     {
-                        if ((modeInfoArray[iModeInfo].id == pathInfoArray[iPathInfo].targetInfo.id) &&
+                        if (id_cmp(modeInfoArray[iModeInfo].id, pathInfoArray[iPathInfo].targetInfo.id) &&
                             (modeInfoArray[iModeInfo].infoType == CCDWrapper.DisplayConfigModeInfoType.Target))
                         {
+                            modeInfoArray[iModeInfo].id = pathInfoArray[iPathInfo].targetInfo.id;
                             // We found target adapter id, now lets look for the source modeInfo and adapterID
                             for (int iModeInfoSource = 0; iModeInfoSource < modeInfoArray.Length; iModeInfoSource++)
                             {
@@ -127,7 +85,6 @@ namespace MonitorSwitcherGUI
                         }
                     }
                 }
-
                 // Set loaded display settings
                 uint numPathArrayElements = (uint)pathInfoArray.Length;
                 uint numModeInfoArrayElements = (uint)modeInfoArray.Length;
@@ -178,60 +135,12 @@ namespace MonitorSwitcherGUI
 
         public static bool SaveDisplaySettings(String fileName)
         {
-            CCDWrapper.DisplayConfigPathInfo[] pathInfoArray = new CCDWrapper.DisplayConfigPathInfo[0];
-            CCDWrapper.DisplayConfigModeInfo[] modeInfoArray = new CCDWrapper.DisplayConfigModeInfo[0];
-
-            bool status = GetDisplaySettings(ref pathInfoArray, ref modeInfoArray, true);
-            if (status)
-            {
-                System.Xml.Serialization.XmlSerializer writerPath = new System.Xml.Serialization.XmlSerializer(typeof(CCDWrapper.DisplayConfigPathInfo));
-                System.Xml.Serialization.XmlSerializer writerModeTarget = new System.Xml.Serialization.XmlSerializer(typeof(CCDWrapper.DisplayConfigTargetMode));
-                System.Xml.Serialization.XmlSerializer writerModeSource = new System.Xml.Serialization.XmlSerializer(typeof(CCDWrapper.DisplayConfigSourceMode));
-                System.Xml.Serialization.XmlSerializer writerModeInfoType = new System.Xml.Serialization.XmlSerializer(typeof(CCDWrapper.DisplayConfigModeInfoType));
-                System.Xml.Serialization.XmlSerializer writerModeAdapterID = new System.Xml.Serialization.XmlSerializer(typeof(CCDWrapper.LUID));
-                XmlWriter xml = XmlWriter.Create(fileName);
-
-                xml.WriteStartDocument();
-                xml.WriteStartElement("displaySettings");
-                xml.WriteStartElement("pathInfoArray");
-                foreach (CCDWrapper.DisplayConfigPathInfo pathInfo in pathInfoArray)
-                {
-                    writerPath.Serialize(xml, pathInfo);
-                }
-                xml.WriteEndElement();
-
-                xml.WriteStartElement("modeInfoArray");
-                for (int iModeInfo = 0; iModeInfo < modeInfoArray.Length; iModeInfo++)
-                {
-                    xml.WriteStartElement("modeInfo");
-                    CCDWrapper.DisplayConfigModeInfo modeInfo = modeInfoArray[iModeInfo];
-                    xml.WriteElementString("id", modeInfo.id.ToString());
-                    writerModeAdapterID.Serialize(xml, modeInfo.adapterId);
-                    writerModeInfoType.Serialize(xml, modeInfo.infoType);
-                    if (modeInfo.infoType == CCDWrapper.DisplayConfigModeInfoType.Target)
-                    {
-                        writerModeTarget.Serialize(xml, modeInfo.targetMode);
-                    }
-                    else
-                    {
-                        writerModeSource.Serialize(xml, modeInfo.sourceMode);
-                    }
-                    xml.WriteEndElement();
-                }
-                xml.WriteEndElement();
-                xml.WriteEndElement();
-                xml.WriteEndDocument();
-                xml.Flush();
-                xml.Close();
-
-                return true;
-            }
-            else
-            {
-                Console.WriteLine("Failed to get display settings, ERROR: " + status.ToString());
-            }
-
-            return false;
+            var save = new SaveFormat();
+            if (!GetDisplaySettings(ref save.PathInfoList, ref save.ModeInfoList, true))
+                return false;
+            using (StreamWriter sw = new StreamWriter(fileName))
+                sw.Write(JsonConvert.SerializeObject(save));
+            return true;
         }
 
         static void Main(string[] args)

@@ -245,7 +245,7 @@ namespace MonitorSwitcherGUI
             trayMenu.Items.Add("-");
 
             // Find all profile files
-            string[] profiles = Directory.GetFiles(settingsDirectoryProfiles, "*.xml");
+            string[] profiles = Directory.GetFiles(settingsDirectoryProfiles, "*.json");
 
             // Add to load menu
             foreach (string profile in profiles)
@@ -326,7 +326,7 @@ namespace MonitorSwitcherGUI
 
         public string ProfileFileFromName(string name)
         {
-            string fileName = name + ".xml";
+            string fileName = name + ".json";
             string filePath = Path.Combine(settingsDirectoryProfiles, fileName);
 
             return filePath;
